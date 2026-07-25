@@ -1,0 +1,105 @@
+
+Action: file_editor view /app/design_guidelines.json
+Observation: [Showing lines 1-101 of 101 total] /app/design_guidelines.json:
+1|{
+2|  "theme": "dark",
+3|  "archetype": "Swiss & High-Contrast",
+4|  "typography": {
+5|    "headings": "Chivo",
+6|    "body": "Manrope",
+7|    "monospace": "JetBrains Mono",
+8|    "rules": [
+9|      "Use 'Chivo' with tracking-tight for all headings (H1-H4) to convey authority and modern tech.",
+10|      "Use 'JetBrains Mono' for all wallet addresses, block hashes, transaction IDs, and cryptographic proofs to emphasize transparency and technical accuracy.",
+11|      "Use 'Manrope' for body text with relaxed line height.",
+12|      "CRITICAL: Never use Inter, Roboto, Open Sans, or Lato for headings."
+13|    ]
+14|  },
+15|  "colors": {
+16|    "background": "#050505",
+17|    "surface": "#121212",
+18|    "surface_glass": "rgba(18, 18, 18, 0.7)",
+19|    "primary": "#0055FF",
+20|    "accent_cyan": "#00F0FF",
+21|    "accent_red": "#FF3366",
+22|    "accent_yellow": "#FFCC00",
+23|    "text_primary": "#FFFFFF",
+24|    "text_secondary": "#A1A1AA",
+25|    "border": "#27272A",
+26|    "rules": [
+27|      "Use high contrast. Avoid muddy grays. Tint neutral grays with a slight blue hue for a technical feel.",
+28|      "Color is Function Only. 95% of the UI should be monochrome. Color exists only to guide action.",
+29|      "Primary color should be used sparingly for primary actions like 'Cast Vote'.",
+30|      "Use accent colors to denote states: red for closed/danger, yellow for pending, cyan for verified/success."
+31|    ]
+32|  },
+33|  "visual_enhancers": {
+34|    "surfaces": "Use 'Grid Borders' (The Technical Look) for the Blockchain Explorer section to expose the skeleton and show data natively. Use 'Glassmorphism' (Crystal) for sticky navigation and modals.",
+35|    "textures": "Add subtle noise overlays to deep dark backgrounds to prevent flatness.",
+36|    "shadows": "Minimal soft shadows. Rely on 1px solid borders for separation.",
+37|    "borders": "1px delicate inner stroke on glass panels (border-white/10)."
+38|  },
+39|  "layouts_and_grids": {
+40|    "general": "Bento grid approach for the Dashboard. Strict grid hierarchy for the Admin Panel.",
+41|    "spacing": "Generous spacing. Use p-6 or p-8 inside cards. Tailwind Scale: p-1, p-2, p-4, p-6, p-8, p-12, p-16, p-24.",
+42|    "explorer": "High density grid. Ensure data correlation. Table views must be full width with clear separation. Use 'border-collapse' style layout."
+43|  },
+44|  "motion": {
+45|    "interactions": "Hover states must invert colors or add a sharp 2px inner glow. Button presses should scale down slightly.",
+46|    "transitions": "Use specific transition properties (e.g., transition: transform 0.2s ease, opacity 0.2s ease). Avoid 'transition: all'.",
+47|    "loaders": "Use ASCII or Monospace text loaders (e.g., 'Verifying Block [||||||    ]') instead of generic spinners where possible."
+48|  },
+49|  "component_guidelines": {
+50|    "buttons": "Sharp edges (rounded-none or max rounded-sm). High contrast text. Primary button should be vibrant blue with white text.",
+51|    "cards": "Flat background, 1px border (#27272A). Hovering over a clickable card should lift it slightly (-translate-y-1) and darken border.",
+52|    "inputs": "Shadcn standard inputs but customized with sharp borders and vibrant focus rings.",
+53|    "tables": "Shadcn tables for Blockchain Explorer and Admin candidates list. Dense padding, hover states on rows.",
+54|    "charts": "Use Recharts for Election Results. Minimalist tooltips, no gridlines, neon stroke colors on dark backgrounds."
+55|  },
+56|  "accessibility": {
+57|    "contrast": "Ensure all text meets WCAG AA standards. Normal text min 4.5:1. Large text min 3:1.",
+58|    "focus": "focus:ring-2 focus:ring-blue-500 focus:outline-none on all interactive elements.",
+59|    "motion": "Respect prefers-reduced-motion."
+60|  },
+61|  "media": {
+62|    "image_urls": [
+63|      {
+64|        "url": "https://images.unsplash.com/photo-1644088379091-d574269d422f?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NTYxODF8MHwxfHNlYXJjaHwxfHxhYnN0cmFjdCUyMGJsb2NrY2hhaW4lMjBuZXR3b3JrfGVufDB8fHx8MTc4MzU5ODk1N3ww&ixlib=rb-4.1.0&q=85",
+65|        "description": "Abstract blue network dots",
+66|        "category": "hero_background",
+67|        "instructions": "Use as a subtle background for the landing page or login hero section, blended heavily with opacity (e.g., bg-black/80)."
+68|      },
+69|      {
+70|        "url": "https://images.unsplash.com/photo-1639322537228-f710d846310a?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NTYxODF8MHwxfHNlYXJjaHwyfHxhYnN0cmFjdCUyMGJsb2NrY2hhaW4lMjBuZXR3b3JrfGVufDB8fHx8MTc4MzU5ODk1N3ww&ixlib=rb-4.1.0&q=85",
+71|        "description": "Cubes on black surface",
+72|        "category": "feature_card",
+73|        "instructions": "Use in the Blockchain Explorer or Security feature section to visually represent the immutable ledger."
+74|      }
+75|    ]
+76|  },
+77|  "instructions_to_main_agent": [
+78|    "Install required fonts from Google Fonts: Chivo, Manrope, JetBrains Mono.",
+79|    "Install lucide-react for icons.",
+80|    "Use Shadcn UI components for Tables, Cards, Inputs, Dialogs, Buttons.",
+81|    "Implement Recharts for the Live Election Results tally.",
+82|    "Ensure the Blockchain Explorer uses a dense, technical layout with JetBrains Mono for hashes.",
+83|    "All interactive and key informational elements MUST include a 'data-testid' attribute.",
+84|    "DO NOT use transparent backgrounds for dropdowns or the main header. Use solid or blurred backgrounds.",
+85|    "Create a clean separation between the Voter Dashboard, Admin Panel, and the public Explorer."
+86|  ],
+87|  "UNIVERSAL_GUIDELINES_FOR_MAIN_AGENT": [
+88|    "You tend to converge toward generic, 'on distribution' outputs. Avoid the 'AI slop' aesthetic. Make creative, distinctive frontends.",
+89|    "Dark colors look good when used independently without gradients. DO NOT use dark colors as gradients.",
+90|    "Don't make generic centered layouts, simplistic gradients, and uniform styling.",
+91|    "Create depth through layered design elements with z-index hierarchy and 1px crisp borders.",
+92|    "Use glass-morphism effects with backdrop filters (12-24px blur).",
+93|    "You MUST NOT apply universal transition (e.g., transition: all). Add transitions for specific interactive elements.",
+94|    "You MUST NOT center align the app container (.App { text-align: center; }).",
+95|    "Always use modern button styles (sharp edges for this tech theme) with interaction animations.",
+96|    "NEVER use AI assistant Emoji characters like 🤖🧠💭💡🔮🎯 for icons.",
+97|    "Every interaction needs micro-animations - hover states, transitions, entrance animations. Static = dead.",
+98|    "Use 2-3x more spacing than feels comfortable.",
+99|    "Use sonner for toast notifications (located in /app/src/components/ui/sonner.js or similar)."
+100|  ]
+101|}
+[End of file]

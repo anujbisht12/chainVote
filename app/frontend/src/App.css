@@ -1,0 +1,4 @@
+
+Action: file_editor create /app/frontend/src/App.css --file-text "/* App-specific overrides – kept minimal */
+.App { min-height: 100vh; }
+"
