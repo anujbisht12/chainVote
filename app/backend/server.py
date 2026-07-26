@@ -297,7 +297,7 @@ async def register(payload: RegisterIn, response: Response):
     }
     await db.users.insert_one(doc)
     token = create_access_token(user_id, email, "voter")
-    response.set_cookie("access_token", token, httponly=True, samesite="lax", max_age=8 * 3600, path="/")
+    response.set_cookie("access_token", token, httponly=True, samesite="none", max_age=8 * 3600, path="/")
     return {
         "token": token,
         "user": {"id": user_id, "email": email, "name": payload.name, "role": "voter", "voter_tag": voter_tag},
@@ -313,7 +313,7 @@ async def login(payload: LoginIn, response: Response):
     if not user or not verify_password(payload.password, user["password_hash"]):
         raise HTTPException(status_code=401, detail="Invalid email or password")
     token = create_access_token(user["id"], email, user["role"])
-    response.set_cookie("access_token", token, httponly=True, samesite="lax", max_age=8 * 3600, path="/")
+    response.set_cookie("access_token", token, httponly=True, samesite="none", max_age=8 * 3600, path="/")
     return {
         "token": token,
         "user": {
