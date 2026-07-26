@@ -3,7 +3,7 @@ import { useState, useEffect } from "react";
 import { useAuth } from "../auth";
 import api from "../api";
 import { Link } from "react-router-dom";
-import { KeyRound, Vote, Boxes, Shield } from "lucide-react";
+import { KeyRound, Vote, Shield } from "lucide-react";
 
 export default function Dashboard() {
   const { user } = useAuth();

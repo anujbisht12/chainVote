@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 
 import api from "../api";
-import { Link, useSearchParams } from "react-router-dom";
+import { useSearchParams } from "react-router-dom";
 import { CheckCircle2, XCircle, Boxes, Search, ShieldCheck } from "lucide-react";
 
 export default function Explorer() {
@@ -19,7 +19,7 @@ export default function Explorer() {
     });
   };
 
-  useEffect(refresh, []);
+  useEffect(refresh, [params]);
 
   const runVerify = async () => {
     setVerify({ loading: true });
