@@ -1,13 +1,3 @@
-"""Secure Blockchain Voting System – FastAPI backend.
-
-Features:
-  • JWT auth (bcrypt) with voter/admin roles
-  • RSA-2048 keypair per voter (private key returned once on register)
-  • Immutable blockchain ledger of ballots (SHA-256 linked blocks, tiny PoW)
-  • Vote signature verification against voter public key
-  • Elections, candidates, tally, verification endpoints
-"""
-
 from dotenv import load_dotenv
 from pathlib import Path
 
@@ -20,9 +10,8 @@ import uuid
 import hashlib
 import logging
 import base64
-import certifi
 from datetime import datetime, timezone, timedelta
-from typing import List, Optional, Literal
+from typing import List, Optional
 
 import bcrypt
 import jwt
@@ -31,8 +20,12 @@ from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, Field, EmailStr
 
-from cryptography.hazmat.primitives.asymmetric import rsa, padding
+from cryptography.hazmat.primitives.asymmetric import padding
 from cryptography.hazmat.primitives import hashes, serialization
+
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 
 
 # ---------------------------------------------------------------------------
@@ -42,21 +35,58 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 logger = logging.getLogger("voting")
 
 mongo_url = os.environ["MONGO_URL"]
-client = AsyncIOMotorClient(mongo_url, tlsCAFile=certifi.where())
+client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ["DB_NAME"]]
 
 JWT_ALGORITHM = "HS256"
-JWT_SECRET = os.environ.get("JWT_SECRET", "dev-secret-change-me-super-long-secret-string-12345")
-ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@vote.io").lower()
-ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "Admin@12345")
-POW_DIFFICULTY = 3  # leading hex zeros for lightweight proof-of-work
+
+# --- NO INSECURE DEFAULTS -----------------------------------------------
+# Fail fast and loud instead of silently running with a public/known
+# secret. This is the single most important change from the earlier
+# version, which fell back to a hard-coded secret if .env failed to load.
+def _require_env(name: str) -> str:
+    val = os.environ.get(name)
+    if not val:
+        raise RuntimeError(
+            f"Missing required environment variable: {name}. "
+            f"Refusing to start with an insecure default."
+        )
+    return val
+
+
+JWT_SECRET = _require_env("JWT_SECRET")
+ADMIN_EMAIL = _require_env("ADMIN_EMAIL").lower()
+ADMIN_PASSWORD = _require_env("ADMIN_PASSWORD")
+POW_DIFFICULTY = int(os.environ.get("POW_DIFFICULTY", "3"))
+
+# --- CORS: explicit allow-list only --------------------------------------
+_raw_origins = os.environ.get("CORS_ORIGINS", "")
+CORS_ORIGINS = [o.strip() for o in _raw_origins.split(",") if o.strip()]
+if not CORS_ORIGINS:
+    raise RuntimeError(
+        "CORS_ORIGINS must be set to an explicit comma-separated list of "
+        "trusted origins, e.g. https://yourdomain.com. Wildcard '*' is not "
+        "allowed because this API uses cookies (allow_credentials=True)."
+    )
+if "*" in CORS_ORIGINS:
+    raise RuntimeError(
+        "CORS_ORIGINS cannot contain '*' when allow_credentials=True — "
+        "this combination lets any website read authenticated responses "
+        "on behalf of a logged-in user."
+    )
+
+# --- Rate limiting ---------------------------------------------------------
+limiter = Limiter(key_func=get_remote_address)
 
 app = FastAPI(title="ChainVote – Secure Blockchain Voting")
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
 api = APIRouter(prefix="/api")
 
 
 # ---------------------------------------------------------------------------
-# Utilities – crypto / hashing / jwt
+# Utilities – password hashing / jwt / hashing
 # ---------------------------------------------------------------------------
 def hash_password(pw: str) -> str:
     return bcrypt.hashpw(pw.encode(), bcrypt.gensalt()).decode()
@@ -84,29 +114,15 @@ def sha256_hex(data: str) -> str:
     return hashlib.sha256(data.encode()).hexdigest()
 
 
-def generate_voter_keypair():
-    """Generate RSA-2048 keypair; return (private_pem, public_pem)."""
-    priv = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    private_pem = priv.private_bytes(
-        encoding=serialization.Encoding.PEM,
-        format=serialization.PrivateFormat.PKCS8,
-        encryption_algorithm=serialization.NoEncryption(),
-    ).decode()
-    public_pem = priv.public_key().public_bytes(
-        encoding=serialization.Encoding.PEM,
-        format=serialization.PublicFormat.SubjectPublicKeyInfo,
-    ).decode()
-    return private_pem, public_pem
-
-
-def sign_payload(private_pem: str, message: str) -> str:
-    key = serialization.load_pem_private_key(private_pem.encode(), password=None)
-    sig = key.sign(
-        message.encode(),
-        padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=padding.PSS.MAX_LENGTH),
-        hashes.SHA256(),
-    )
-    return base64.b64encode(sig).decode()
+# --- Signature verification only. The server NEVER signs on a voter's ---
+# --- behalf and NEVER receives a voter's private key.                  ---
+#
+# Salt length is fixed to the hash's digest size (32 bytes for SHA-256)
+# rather than PSS.MAX_LENGTH, because that's what the Web Crypto API's
+# RSA-PSS sign() uses (saltLength is passed explicitly per call and
+# browsers commonly standardize on hash-length salts). Server and client
+# must agree on this value or every signature will fail to verify.
+PSS_SALT_LENGTH = hashes.SHA256().digest_size  # 32
 
 
 def verify_signature(public_pem: str, message: str, signature_b64: str) -> bool:
@@ -115,10 +131,20 @@ def verify_signature(public_pem: str, message: str, signature_b64: str) -> bool:
         pub.verify(
             base64.b64decode(signature_b64),
             message.encode(),
-            padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=padding.PSS.MAX_LENGTH),
+            padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=PSS_SALT_LENGTH),
             hashes.SHA256(),
         )
         return True
+    except Exception:
+        return False
+
+
+def is_valid_public_key_pem(public_pem: str) -> bool:
+    """Sanity-check that a client-submitted public key is actually a
+    parseable RSA public key before we store it."""
+    try:
+        key = serialization.load_pem_public_key(public_pem.encode())
+        return key.key_size >= 2048
     except Exception:
         return False
 
@@ -127,12 +153,11 @@ def verify_signature(public_pem: str, message: str, signature_b64: str) -> bool:
 # Auth middleware
 # ---------------------------------------------------------------------------
 async def get_current_user(request: Request) -> dict:
-    token = None
-    auth = request.headers.get("Authorization", "")
-    if auth.startswith("Bearer "):
-        token = auth[7:]
-    if not token:
-        token = request.cookies.get("access_token")
+    # Cookie-only auth. We intentionally do NOT also accept a bearer token
+    # from localStorage/sessionStorage — httpOnly cookies can't be read by
+    # JavaScript, so this is the XSS-resistant path. Keeping a second,
+    # JS-readable token around would undermine that protection.
+    token = request.cookies.get("access_token")
     if not token:
         raise HTTPException(status_code=401, detail="Not authenticated")
     try:
@@ -141,7 +166,7 @@ async def get_current_user(request: Request) -> dict:
         raise HTTPException(status_code=401, detail="Token expired")
     except jwt.InvalidTokenError:
         raise HTTPException(status_code=401, detail="Invalid token")
-    user = await db.users.find_one({"id": payload["sub"]}, {"_id": 0, "password_hash": 0, "private_key": 0})
+    user = await db.users.find_one({"id": payload["sub"]}, {"_id": 0, "password_hash": 0})
     if not user:
         raise HTTPException(status_code=401, detail="User not found")
     return user
@@ -159,7 +184,8 @@ async def require_admin(user: dict = Depends(get_current_user)) -> dict:
 class RegisterIn(BaseModel):
     name: str = Field(min_length=2, max_length=80)
     email: EmailStr
-    password: str = Field(min_length=6, max_length=128)
+    password: str = Field(min_length=8, max_length=128)  # raised from 6 -> 8
+    public_key: str = Field(min_length=100)  # SPKI PEM, generated client-side
 
 
 class LoginIn(BaseModel):
@@ -182,7 +208,7 @@ class ElectionIn(BaseModel):
 class VoteIn(BaseModel):
     election_id: str
     candidate_id: str
-    private_key: str  # PEM voter uses to sign
+    signature: str  # base64 RSA-PSS signature produced in the browser
 
 
 # ---------------------------------------------------------------------------
@@ -244,14 +270,16 @@ async def on_startup():
 
     admin = await db.users.find_one({"email": ADMIN_EMAIL})
     if not admin:
-        priv, pub = generate_voter_keypair()
+        # Admins never vote, so they don't strictly need a voting keypair.
+        # We still record a role + tag for audit/log consistency, but no
+        # RSA key material is generated or stored for the admin account.
         doc = {
             "id": str(uuid.uuid4()),
             "email": ADMIN_EMAIL,
             "name": "Election Commission",
             "role": "admin",
             "password_hash": hash_password(ADMIN_PASSWORD),
-            "public_key": pub,
+            "public_key": None,
             "voter_tag": sha256_hex(ADMIN_EMAIL + "admin-salt"),
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
@@ -278,11 +306,22 @@ async def root():
 
 
 @api.post("/auth/register")
-async def register(payload: RegisterIn, response: Response):
+@limiter.limit("5/minute")
+async def register(request: Request, payload: RegisterIn, response: Response):
     email = payload.email.lower()
+
+    if not is_valid_public_key_pem(payload.public_key):
+        raise HTTPException(status_code=400, detail="Invalid public key. Please try registering again.")
+
     if await db.users.find_one({"email": email}):
-        raise HTTPException(status_code=400, detail="Email already registered")
-    priv, pub = generate_voter_keypair()
+        # Generic message: doesn't confirm whether this email is already
+        # registered, to avoid leaking which emails have accounts.
+        raise HTTPException(
+            status_code=400,
+            detail="We couldn't complete registration with those details. "
+                   "If you already have an account, try logging in instead.",
+        )
+
     user_id = str(uuid.uuid4())
     voter_tag = sha256_hex(user_id + email + "voter-salt")
     doc = {
@@ -291,31 +330,34 @@ async def register(payload: RegisterIn, response: Response):
         "name": payload.name,
         "role": "voter",
         "password_hash": hash_password(payload.password),
-        "public_key": pub,
+        "public_key": payload.public_key,
         "voter_tag": voter_tag,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     await db.users.insert_one(doc)
     token = create_access_token(user_id, email, "voter")
-    response.set_cookie("access_token", token, httponly=True, samesite="none", max_age=8 * 3600, path="/")
+    response.set_cookie(
+        "access_token", token, httponly=True, samesite="lax", secure=True, max_age=8 * 3600, path="/"
+    )
     return {
-        "token": token,
         "user": {"id": user_id, "email": email, "name": payload.name, "role": "voter", "voter_tag": voter_tag},
-        "private_key": priv,  # returned ONCE – shown to voter to download
-        "public_key": pub,
     }
 
 
 @api.post("/auth/login")
-async def login(payload: LoginIn, response: Response):
+@limiter.limit("5/minute")
+async def login(request: Request, payload: LoginIn, response: Response):
     email = payload.email.lower()
     user = await db.users.find_one({"email": email})
+    # Constant-shape error whether the email exists or the password is
+    # wrong, so failed logins don't reveal which emails are registered.
     if not user or not verify_password(payload.password, user["password_hash"]):
         raise HTTPException(status_code=401, detail="Invalid email or password")
     token = create_access_token(user["id"], email, user["role"])
-    response.set_cookie("access_token", token, httponly=True, samesite="none", max_age=8 * 3600, path="/")
+    response.set_cookie(
+        "access_token", token, httponly=True, samesite="lax", secure=True, max_age=8 * 3600, path="/"
+    )
     return {
-        "token": token,
         "user": {
             "id": user["id"],
             "email": user["email"],
@@ -352,7 +394,7 @@ async def create_election(payload: ElectionIn, admin: dict = Depends(require_adm
         "title": payload.title,
         "description": payload.description or "",
         "candidates": candidates,
-        "status": "open",  # open | closed
+        "status": "open",
         "created_by": admin["id"],
         "created_at": datetime.now(timezone.utc).isoformat(),
         "closed_at": None,
@@ -406,7 +448,6 @@ async def election_results(election_id: str):
     e = await db.elections.find_one({"id": election_id}, {"_id": 0})
     if not e:
         raise HTTPException(404, "Election not found")
-    # Only reveal tally after election closed
     tally = {c["id"]: 0 for c in e["candidates"]}
     total = 0
     if e["status"] == "closed":
@@ -432,10 +473,11 @@ async def election_results(election_id: str):
 
 
 # ---------------------------------------------------------------------------
-# Voting
+# Voting — server only ever sees a signature, never a private key
 # ---------------------------------------------------------------------------
 @api.post("/vote")
-async def cast_vote(payload: VoteIn, user: dict = Depends(get_current_user)):
+@limiter.limit("10/minute")
+async def cast_vote(request: Request, payload: VoteIn, user: dict = Depends(get_current_user)):
     if user["role"] != "voter":
         raise HTTPException(403, "Admins cannot vote")
 
@@ -448,36 +490,31 @@ async def cast_vote(payload: VoteIn, user: dict = Depends(get_current_user)):
     if not any(c["id"] == payload.candidate_id for c in e["candidates"]):
         raise HTTPException(400, "Invalid candidate")
 
-    # Ensure voter hasn't already voted
     existing = await db.votes.find_one({"election_id": payload.election_id, "voter_id": user["id"]})
     if existing:
         raise HTTPException(400, "You have already voted in this election")
 
     voter_doc = await db.users.find_one({"id": user["id"]})
     public_key = voter_doc["public_key"]
+    if not public_key:
+        raise HTTPException(400, "No voting key on file for this account")
 
-    # Voter signs message with their private key
+    # Same message format the browser signs: election_id | candidate_id | voter_tag
     message = f"{payload.election_id}|{payload.candidate_id}|{user['voter_tag']}"
-    try:
-        signature = sign_payload(payload.private_key, message)
-    except Exception:
-        raise HTTPException(400, "Invalid private key format")
 
-    if not verify_signature(public_key, message, signature):
-        raise HTTPException(400, "Signature verification failed – private key does not match your account")
+    if not verify_signature(public_key, message, payload.signature):
+        raise HTTPException(400, "Signature verification failed — this ballot was not signed by your registered key")
 
-    # Build ballot – voter_tag preserves anonymity (no email/name) but proves uniqueness
     ballot = {
         "type": "vote",
         "election_id": payload.election_id,
         "candidate_id": payload.candidate_id,
         "voter_tag": user["voter_tag"],
-        "signature": signature,
+        "signature": payload.signature,
         "signed_message_hash": sha256_hex(message),
     }
     block = await append_block(ballot)
 
-    # Persist vote for tally (keeps voter_id server-side for uniqueness, never exposed)
     await db.votes.insert_one({
         "id": str(uuid.uuid4()),
         "election_id": payload.election_id,
@@ -565,7 +602,7 @@ app.include_router(api)
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
-    allow_origins=os.environ.get("CORS_ORIGINS", "*").split(","),
+    allow_origins=CORS_ORIGINS,
     allow_methods=["*"],
     allow_headers=["*"],
 )

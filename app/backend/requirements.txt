@@ -7,4 +7,3 @@ bcrypt
 pydantic[email]
 cryptography
 slowapi
-certifi

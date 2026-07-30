@@ -5,6 +5,7 @@ import api, { formatApiError } from "../api";
 import { useAuth } from "../auth";
 import { ShieldCheck, KeyRound, Upload, CheckCircle2, Boxes } from "lucide-react";
 import Results from "./Results";
+import { signMessage, looksLikePrivateKeyPem } from "../lib/voteCrypto";
 
 export default function ElectionDetail() {
   const { electionId } = useParams();
@@ -18,7 +19,7 @@ export default function ElectionDetail() {
   const [err, setErr] = useState("");
   const [alreadyVoted, setAlreadyVoted] = useState(false);
 
- useEffect(() => {
+  useEffect(() => {
     api.get(`/elections/${electionId}`).then((r) => setElection(r.data));
     if (user?.role === "voter") {
       api.get("/my-votes").then((r) => {
@@ -39,12 +40,35 @@ export default function ElectionDetail() {
     setErr("");
     if (!selected) return setErr("Choose a candidate first.");
     if (!privateKey.trim()) return setErr("Paste or upload your private key to sign the ballot.");
+    if (!looksLikePrivateKeyPem(privateKey)) {
+      return setErr("That doesn't look like a valid private key file (.pem). Check you uploaded the right file.");
+    }
     setSubmitting(true);
     try {
-      const { data } = await api.post("/vote", { election_id: electionId, candidate_id: selected, private_key: privateKey });
+      // The exact same message format the server verifies against:
+      // election_id | candidate_id | voter_tag
+      const message = `${electionId}|${selected}|${user.voter_tag}`;
+
+      // Signing happens right here, in the browser. `privateKey` is a
+      // local variable that lives only in this component's state — it is
+      // never included in the request body below.
+      const signature = await signMessage(privateKey, message);
+
+      const { data } = await api.post("/vote", {
+        election_id: electionId,
+        candidate_id: selected,
+        signature,
+      });
       setReceipt(data.receipt);
+
+      // Clear the private key from memory as soon as we're done with it.
+      setPrivateKey("");
     } catch (e) {
-      setErr(formatApiError(e.response?.data?.detail, "Vote failed"));
+      if (e?.response) {
+        setErr(formatApiError(e.response?.data?.detail, "Vote failed"));
+      } else {
+        setErr("Could not sign this ballot with the provided key. Make sure it's the correct .pem file.");
+      }
     } finally {
       setSubmitting(false);
     }
@@ -63,7 +87,7 @@ export default function ElectionDetail() {
             <h1 className="text-3xl text-white tracking-tight">Ballot sealed on-chain</h1>
           </div>
           <p className="text-[var(--text-dim)] mb-8">
-            Your ballot was signed with your RSA-2048 private key and mined into block <span className="font-mono text-white">#{receipt.block_index}</span>. Keep this receipt — anyone can verify it in the public explorer without learning your identity.
+            Your ballot was signed in your browser with your RSA-2048 private key and mined into block <span className="font-mono text-white">#{receipt.block_index}</span>. Keep this receipt — anyone can verify it in the public explorer without learning your identity.
           </p>
           <ReceiptRow label="BLOCK INDEX" value={`#${receipt.block_index}`}/>
           <ReceiptRow label="BLOCK HASH" value={receipt.block_hash} testid="receipt-block-hash"/>
@@ -131,13 +155,17 @@ export default function ElectionDetail() {
             <div className="text-sm text-[var(--text-dim)]">Admin accounts cannot cast ballots.</div>
           ) : (
             <>
-              <div className="text-xs text-[var(--text-dim)] mb-3">Paste your RSA private key (.pem) or upload the file you saved at registration.</div>
+              <div className="text-xs text-[var(--text-dim)] mb-3">
+                Paste your RSA private key (.pem) or upload the file you saved at registration. It's signed right here in your browser and is never transmitted to our servers.
+              </div>
               <textarea
                 data-testid="vote-privatekey-input"
                 value={privateKey}
                 onChange={(e) => setPrivateKey(e.target.value)}
                 placeholder="-----BEGIN PRIVATE KEY-----&#10;…&#10;-----END PRIVATE KEY-----"
                 className="input-tech font-mono text-xs h-36 resize-none"
+                autoComplete="off"
+                spellCheck={false}
               />
               <label className="btn-ghost inline-flex items-center gap-2 mt-3 cursor-pointer">
                 <Upload size={12}/> Upload .pem
@@ -152,10 +180,10 @@ export default function ElectionDetail() {
                 className="btn-primary w-full mt-6 inline-flex items-center justify-center gap-2"
                 onClick={castVote}
               >
-                <KeyRound size={14}/> {submitting ? "Signing & mining…" : "Sign & Cast Ballot"}
+                <KeyRound size={14}/> {submitting ? "Signing in your browser…" : "Sign & Cast Ballot"}
               </button>
               <div className="text-[10px] text-[var(--text-dim)] font-mono uppercase tracking-widest mt-4">
-                Message signed: election_id | candidate_id | voter_tag
+                Signed locally: election_id | candidate_id | voter_tag
               </div>
             </>
           )}

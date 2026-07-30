@@ -3,6 +3,7 @@ import { useState } from "react";
 import { useAuth } from "../auth";
 import { useNavigate, Link } from "react-router-dom";
 import { KeyRound, Download, Copy, CheckCircle2, AlertTriangle } from "lucide-react";
+import { generateVoterKeypairPem } from "../lib/voteCrypto";
 
 export default function Register() {
   const { register } = useAuth();
@@ -17,10 +18,22 @@ export default function Register() {
     e.preventDefault();
     setErr("");
     setLoading(true);
-    const res = await register(form.name, form.email, form.password);
-    setLoading(false);
-    if (!res.ok) return setErr(res.error);
-    setPrivateKey(res.privateKey);
+    try {
+      // Keypair is generated locally, in the browser. Only publicKeyPem
+      // is ever sent to the server (inside register()). privateKeyPem
+      // stays in this component's state and is shown to the user once.
+      const { publicKeyPem, privateKeyPem } = await generateVoterKeypairPem();
+      const res = await register(form.name, form.email, form.password, publicKeyPem);
+      if (!res.ok) {
+        setErr(res.error);
+        return;
+      }
+      setPrivateKey(privateKeyPem);
+    } catch (err) {
+      setErr("Could not generate your voting key in this browser. Please try a different browser.");
+    } finally {
+      setLoading(false);
+    }
   };
 
   const download = () => {
@@ -55,7 +68,7 @@ export default function Register() {
             <AlertTriangle size={18} className="text-[var(--yellow)] shrink-0 mt-0.5"/>
             <div className="text-sm text-white">
               <div className="font-semibold text-[var(--yellow)] mb-1">SHOWN ONCE — SAVE IT NOW</div>
-              This private key is the ONLY way to sign your ballot. Without it, you cannot vote. It is never stored in plaintext on our servers.
+              This key was generated in your browser and never sent to our servers. It is the ONLY way to sign your ballot — without it, you cannot vote, and it cannot be recovered or reset.
             </div>
           </div>
 
@@ -88,17 +101,19 @@ export default function Register() {
       <div className="max-w-md w-full card-tech p-10">
         <div className="text-[10px] font-mono uppercase tracking-widest text-[var(--text-dim)] mb-3">STEP 1 / 2</div>
         <h1 className="text-3xl text-white tracking-tight mb-2">Register to vote</h1>
-        <p className="text-sm text-[var(--text-dim)] mb-8">Create an account. We'll generate your RSA-2048 keypair.</p>
+        <p className="text-sm text-[var(--text-dim)] mb-8">
+          Create an account. Your RSA-2048 keypair is generated in your browser — the private key never touches our servers.
+        </p>
 
         <form onSubmit={submit} className="space-y-4">
           <Field label="Full name" testid="register-name" value={form.name} onChange={(v) => setForm({ ...form, name: v })} required minLength={2}/>
           <Field label="Email" type="email" testid="register-email" value={form.email} onChange={(v) => setForm({ ...form, email: v })} required/>
-          <Field label="Password" type="password" testid="register-password" value={form.password} onChange={(v) => setForm({ ...form, password: v })} required minLength={6}/>
+          <Field label="Password" type="password" testid="register-password" value={form.password} onChange={(v) => setForm({ ...form, password: v })} required minLength={8}/>
 
           {err && <div data-testid="register-error" className="text-sm text-[var(--red)] border border-[var(--red)]/30 bg-[var(--red)]/10 px-3 py-2">{err}</div>}
 
           <button data-testid="register-submit" disabled={loading} className="btn-primary w-full">
-            {loading ? "Generating keypair…" : "Create account & mint key"}
+            {loading ? "Generating keypair in your browser…" : "Create account & mint key"}
           </button>
         </form>
 

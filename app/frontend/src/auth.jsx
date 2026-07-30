@@ -7,14 +7,16 @@ export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
 
+  // No localStorage check here — we always just ask the server "who am
+  // I?" and let the httpOnly cookie (if any) answer that. If there's no
+  // valid session, /auth/me returns 401 and we simply treat the user as
+  // logged out.
   const bootstrap = useCallback(async () => {
-    const token = localStorage.getItem("cv_token");
-    if (!token) { setLoading(false); return; }
     try {
       const { data } = await api.get("/auth/me");
       setUser(data);
     } catch (_) {
-      localStorage.removeItem("cv_token");
+      setUser(null);
     } finally {
       setLoading(false);
     }
@@ -25,7 +27,6 @@ export function AuthProvider({ children }) {
   const login = async (email, password) => {
     try {
       const { data } = await api.post("/auth/login", { email, password });
-      localStorage.setItem("cv_token", data.token);
       setUser(data.user);
       return { ok: true, user: data.user };
     } catch (e) {
@@ -33,12 +34,19 @@ export function AuthProvider({ children }) {
     }
   };
 
-  const register = async (name, email, password) => {
+  // publicKeyPem is generated client-side (see lib/voteCrypto.js) by the
+  // caller (Register.jsx) BEFORE this function is invoked. This function
+  // never sees or handles a private key.
+  const register = async (name, email, password, publicKeyPem) => {
     try {
-      const { data } = await api.post("/auth/register", { name, email, password });
-      localStorage.setItem("cv_token", data.token);
+      const { data } = await api.post("/auth/register", {
+        name,
+        email,
+        password,
+        public_key: publicKeyPem,
+      });
       setUser(data.user);
-      return { ok: true, user: data.user, privateKey: data.private_key, publicKey: data.public_key };
+      return { ok: true, user: data.user };
     } catch (e) {
       return { ok: false, error: formatApiError(e.response?.data?.detail, "Registration failed") };
     }
@@ -46,7 +54,6 @@ export function AuthProvider({ children }) {
 
   const logout = async () => {
     try { await api.post("/auth/logout"); } catch (_) {}
-    localStorage.removeItem("cv_token");
     setUser(null);
   };
 

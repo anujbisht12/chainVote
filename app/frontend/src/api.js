@@ -1,16 +1,14 @@
 import axios from "axios";
-
-
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 export const API = `${BACKEND_URL}/api`;
 
+// Auth is cookie-only (httpOnly, set by the server). We deliberately do
+// NOT also keep a copy of the token in localStorage/sessionStorage — that
+// would be readable by any JS running on the page (e.g. via an XSS bug),
+// which defeats the purpose of using an httpOnly cookie in the first
+// place. withCredentials: true is what makes the browser send the cookie
+// automatically with every request.
 const api = axios.create({ baseURL: API, withCredentials: true });
-
-api.interceptors.request.use((config) => {
-  const token = localStorage.getItem("cv_token");
-  if (token) config.headers.Authorization = `Bearer ${token}`;
-  return config;
-});
 
 export default api;
 
